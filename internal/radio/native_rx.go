@@ -41,6 +41,7 @@ func (c *NativeClient) handleVoice(raw []byte) {
 	c.rxMu.Lock()
 	defer c.rxMu.Unlock()
 	if c.rxGUID != "" && c.rxGUID != guid {
+		// Someone else won the radio first; ignore overlap.
 		if time.Since(c.rxLast) < 400*time.Millisecond {
 			return
 		}
@@ -61,7 +62,7 @@ func (c *NativeClient) handleVoice(raw []byte) {
 	cp := make([]byte, len(pkt.Audio))
 	copy(cp, pkt.Audio)
 	c.rxFrames = append(c.rxFrames, cp)
-	if len(c.rxFrames) > 400 {
+	if len(c.rxFrames) > 400 { // ~16s
 		c.finishRXLocked()
 	}
 }
@@ -86,7 +87,7 @@ func (c *NativeClient) finishRXLocked() {
 	c.rxName = ""
 	c.rxFrames = nil
 	c.rxPktID = 0
-	if len(frames) < 6 {
+	if len(frames) < 6 { // < ~240ms
 		return
 	}
 	c.mu.Lock()
