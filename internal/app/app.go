@@ -22,6 +22,8 @@ import (
 	"github.com/skycontrol/skycontrol/internal/weather"
 )
 
+const Version = "10"
+
 type App struct {
 	cfg       *config.Config
 	log       *slog.Logger
@@ -207,6 +209,7 @@ func New(cfg *config.Config) (*App, error) {
 
 func (a *App) Run() error {
 	a.log.Info("Sky Control starting",
+		"version", Version,
 		"voice-provider", a.cfg.VoiceProvider,
 		"voice-name", a.cfg.VoiceName,
 		"default-callsign", a.cfg.DefaultCallsign,
@@ -219,6 +222,7 @@ func (a *App) Run() error {
 	defer cancel()
 
 	radio.KillOrphanExternalAudio()
+	fmt.Printf("  Sky Control v%s\n", Version)
 	fmt.Println("  radio hygiene: cleared leftover ExternalAudio")
 
 	sigCh := make(chan os.Signal, 1)

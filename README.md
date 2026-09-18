@@ -1,21 +1,27 @@
-# Sky Control V9
+# Sky Control v10
 
-Native SRS listen. ATC already talks on native SRS; this version **hears** SRS PTT too.
+Native SRS listen + **GUID → jet lock**.
+
+## What v10 is
+
+- ATC talks and **hears** on native SRS (your radio PTT)
+- First key: lock that SRS GUID to your Tacview jet
+- If it cannot lock: `Station calling, say your callsign.`
+- Same radio stays that jet; another pilot on the same freq does not steal the conversation
 
 ## Install
 
-1. Open https://github.com/SaintGenius/skycontrol-v9
-2. Green **Code** button → **Download ZIP**
-3. Unzip, then copy the `internal` folder into your existing Sky Control folder (overwrite).
-4. Keep `config.yaml`, `piper\`, and `data\voices\` from V8.
+1. Download ZIP from this repo
+2. Copy the `internal` folder into your existing Sky Control folder (overwrite)
+3. Also copy `LAUNCH.bat` if you want the v10 banner
+4. Keep `config.yaml`, `piper\`, `data\voices\`
 5. Run **BUILD.bat**
 
-You want:
+Startup should show:
 
 ```
+Sky Control v10
 ATC radio: SRS native (stays connected)
 SRS native: connected
-SRS listen ON — PTT your SRS radio
+SRS listen ON
 ```
-
-Talk with SRS PTT on the field UHF (COM1).
