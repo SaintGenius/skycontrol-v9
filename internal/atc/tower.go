@@ -71,6 +71,9 @@ type AircraftState struct {
 	EmergAt      time.Time
 	Souls        int
 	FuelState    string
+	RadioGUID    string
+	LastIntent   Intent
+	LastIntentAt time.Time
 }
 
 // Tower is a simple Tower controller.
@@ -84,6 +87,7 @@ type Tower struct {
 	lastIntent   Intent
 	lastIntentAt time.Time
 	aircraft  map[string]*AircraftState
+	binds     map[string]string // SRS GUID -> aircraft ID
 	lastMu       sync.Mutex
 	lastFreq     radio.Frequency
 	lastCallsign string
@@ -105,6 +109,7 @@ func NewTower(log *slog.Logger, db *airfield.Database, rad radio.Client) *Tower 
 		airfields: db,
 		radio:     rad,
 		aircraft:  make(map[string]*AircraftState),
+		binds:     make(map[string]string),
 	}
 }
 
@@ -248,6 +253,26 @@ func (t *Tower) HandleRadioCall(call radio.ReceivedCall) bool {
 		t.lastMu.Unlock()
 	}
 
+	t.mu.Lock()
+	st := t.identifyCaller(call)
+	if st != nil {
+		t.bindGUID(call.GUID, st)
+		if st.Callsign != "" {
+			call.Pilot = st.Callsign
+		}
+		if DetectIntent(text) != IntentSayAgain {
+			st.JustSwitched = false
+		}
+	}
+	t.mu.Unlock()
+
+	if st == nil && strings.TrimSpace(call.GUID) != "" {
+		fmt.Println("  (unknown caller — say callsign)")
+		t.say(call.Frequency, t.cfgCallsign(nil, RoleTower),
+			"Station calling, say your callsign.")
+		return true
+	}
+
 	if t.handleHandoffCall(call) {
 		return true
 	}
@@ -256,13 +281,6 @@ func (t *Tower) HandleRadioCall(call radio.ReceivedCall) bool {
 	}
 	if t.handlePatternCall(call) {
 		return true
-	}
-	if DetectIntent(text) != IntentSayAgain {
-		t.mu.Lock()
-		if st := t.primaryLocked(); st != nil {
-			st.JustSwitched = false
-		}
-		t.mu.Unlock()
 	}
 
 	aiOn := t.agent != nil && t.agent.Enabled()
@@ -289,11 +307,21 @@ func (t *Tower) HandleRadioCall(call radio.ReceivedCall) bool {
 
 	intent := DetectIntent(text)
 	t.mu.Lock()
-	dup := intent != IntentSayAgain && intent != IntentUnknown &&
-		intent == t.lastIntent && time.Since(t.lastIntentAt) < 10*time.Second
-	if !dup {
-		t.lastIntent = intent
-		t.lastIntentAt = time.Now()
+	dup := false
+	if st != nil {
+		dup = intent != IntentSayAgain && intent != IntentUnknown &&
+			intent == st.LastIntent && time.Since(st.LastIntentAt) < 10*time.Second
+		if !dup {
+			st.LastIntent = intent
+			st.LastIntentAt = time.Now()
+		}
+	} else {
+		dup = intent != IntentSayAgain && intent != IntentUnknown &&
+			intent == t.lastIntent && time.Since(t.lastIntentAt) < 10*time.Second
+		if !dup {
+			t.lastIntent = intent
+			t.lastIntentAt = time.Now()
+		}
 	}
 	t.mu.Unlock()
 	if dup {
@@ -328,7 +356,10 @@ func (t *Tower) HandleRadioCall(call radio.ReceivedCall) bool {
 		return t.handleSayAgain(call)
 	case IntentUnable:
 		t.mu.Lock()
-		st := t.primaryLocked()
+		st := t.identifyCaller(call)
+		if st == nil {
+			st = t.findByPilot(call.Pilot)
+		}
 		af := ownerOrNearest(st)
 		t.mu.Unlock()
 		t.sayAs(af, RoleTower, fmt.Sprintf("%s, %s, roger, remain this frequency.",
@@ -631,7 +662,7 @@ func (t *Tower) applyDecision(call radio.ReceivedCall, snap Snapshot, d Decision
 	}
 
 	t.mu.Lock()
-	st := t.primaryLocked()
+	st := t.identifyCaller(call)
 	if st == nil {
 		st = t.findByPilot(call.Pilot)
 	}
@@ -688,13 +719,9 @@ func (t *Tower) handleTakeoffRequest(call radio.ReceivedCall) bool {
 	defer t.mu.Unlock()
 
 	// Find the aircraft that most likely made the call (by pilot name match for now)
-	st := t.primaryLocked()
+	st := t.identifyCaller(call)
 	if st == nil {
 		st = t.findByPilot(call.Pilot)
-	}
-	if st == nil {
-		// Fallback: pick the closest aircraft on the ground near an airfield
-		st = t.nearestOnGround()
 	}
 	if st == nil || ownerOrNearest(st) == nil {
 		t.say(call.Frequency, t.cfgCallsign(nil, RoleTower), "Say again, aircraft requesting takeoff.")
@@ -729,12 +756,9 @@ func (t *Tower) handleLandingRequest(call radio.ReceivedCall) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	st := t.primaryLocked()
+	st := t.identifyCaller(call)
 	if st == nil {
 		st = t.findByPilot(call.Pilot)
-	}
-	if st == nil {
-		st = t.nearestInAir()
 	}
 	if st == nil || ownerOrNearest(st) == nil {
 		t.say(call.Frequency, t.cfgCallsign(nil, RoleTower), "Say again, aircraft requesting landing.")
@@ -949,12 +973,9 @@ func (t *Tower) handleTaxiRequest(call radio.ReceivedCall) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	st := t.primaryLocked()
+	st := t.identifyCaller(call)
 	if st == nil {
 		st = t.findByPilot(call.Pilot)
-	}
-	if st == nil {
-		st = t.nearestOnGround()
 	}
 	if st == nil || ownerOrNearest(st) == nil {
 		t.say(call.Frequency, t.cfgCallsign(nil, RoleGround), "Say again, aircraft requesting taxi.")
@@ -1172,19 +1193,9 @@ func runwayLabel(af *airfield.Airfield) string {
 }
 
 func (t *Tower) resolveCaller(call radio.ReceivedCall, preferGround bool) (*AircraftState, *airfield.Airfield, string) {
-	st := t.primaryLocked()
+	st := t.identifyCaller(call)
 	if st == nil {
 		st = t.findByPilot(call.Pilot)
-	}
-	if st == nil {
-		if preferGround {
-			st = t.nearestOnGround()
-		} else {
-			st = t.nearestInAir()
-			if st == nil {
-				st = t.nearestOnGround()
-			}
-		}
 	}
 	pilot := "Aircraft"
 	var af *airfield.Airfield
@@ -1200,6 +1211,108 @@ func (t *Tower) resolveCaller(call radio.ReceivedCall, preferGround bool) (*Airc
 		}
 	}
 	return st, af, pilot
+}
+
+func liveAC(st *AircraftState) bool {
+	return st != nil && time.Since(st.LastSeen) < 45*time.Second
+}
+
+func compactCS(s string) string {
+	s = strings.ToLower(SpeakCallsign(s))
+	repl := []struct{ from, to string }{
+		{"niner", "9"}, {"zero", "0"}, {"one", "1"}, {"two", "2"},
+		{"three", "3"}, {"four", "4"}, {"five", "5"}, {"six", "6"},
+		{"seven", "7"}, {"eight", "8"}, {"nine", "9"},
+	}
+	for _, p := range repl {
+		s = strings.ReplaceAll(s, p.from, p.to)
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func (t *Tower) matchCallsignInText(text string) *AircraftState {
+	blob := compactCS(text)
+	if len(blob) < 5 {
+		return nil
+	}
+	var hits []*AircraftState
+	for _, st := range t.aircraft {
+		if strings.HasPrefix(st.ID, "demo-") || !liveAC(st) {
+			continue
+		}
+		key := compactCS(st.Callsign)
+		if key == "" {
+			key = compactCS(st.Pilot)
+		}
+		if len(key) < 5 {
+			continue
+		}
+		if strings.Contains(blob, key) {
+			hits = append(hits, st)
+		}
+	}
+	if len(hits) == 1 {
+		return hits[0]
+	}
+	return nil
+}
+
+func (t *Tower) identifyCaller(call radio.ReceivedCall) *AircraftState {
+	guid := strings.TrimSpace(call.GUID)
+	if guid != "" {
+		if id := t.binds[guid]; id != "" {
+			if st := t.aircraft[id]; liveAC(st) {
+				return st
+			}
+		}
+		for _, st := range t.aircraft {
+			if st.RadioGUID == guid && liveAC(st) {
+				return st
+			}
+		}
+	}
+	if st := t.matchCallsignInText(call.Transcript); st != nil {
+		return st
+	}
+	name := strings.TrimSpace(call.Pilot)
+	if name != "" && !strings.EqualFold(name, "Pilot") {
+		if st := t.findByPilot(name); st != nil && liveAC(st) {
+			a := compactCS(st.Callsign)
+			b := compactCS(name)
+			if a != "" && b != "" && (a == b || strings.Contains(a, b) || strings.Contains(b, a)) {
+				return st
+			}
+		}
+	}
+	// Xbox / typed calls have no SRS GUID — local jet only.
+	if guid == "" {
+		return t.primaryLocked()
+	}
+	return nil
+}
+
+func (t *Tower) bindGUID(guid string, st *AircraftState) {
+	guid = strings.TrimSpace(guid)
+	if guid == "" || st == nil {
+		return
+	}
+	if st.RadioGUID == guid && t.binds[guid] == st.ID {
+		return
+	}
+	for _, o := range t.aircraft {
+		if o != nil && o.RadioGUID == guid && o.ID != st.ID {
+			o.RadioGUID = ""
+		}
+	}
+	st.RadioGUID = guid
+	t.binds[guid] = st.ID
+	fmt.Printf("  locked SRS -> %s\n", SpeakCallsign(st.Callsign))
 }
 
 func (t *Tower) SeedDemoAircraft(airfieldID, pilot string) error {

@@ -83,6 +83,7 @@ func (c *NativeClient) finishRXLocked() {
 	frames := c.rxFrames
 	name := c.rxName
 	freq := c.rxFreq
+	guid := c.rxGUID
 	c.rxGUID = ""
 	c.rxName = ""
 	c.rxFrames = nil
@@ -97,10 +98,10 @@ func (c *NativeClient) finishRXLocked() {
 		fmt.Println("  SRS RX: heard a call (no whisper hooked)")
 		return
 	}
-	go c.transcribeRX(frames, name, freq, fn)
+	go c.transcribeRX(frames, name, guid, freq, fn)
 }
 
-func (c *NativeClient) transcribeRX(frames [][]byte, name string, freq Frequency, fn func(string) (string, error)) {
+func (c *NativeClient) transcribeRX(frames [][]byte, name, guid string, freq Frequency, fn func(string) (string, error)) {
 	wav, err := framesToWAV(frames)
 	if err != nil {
 		fmt.Printf("  SRS RX decode failed: %v\n", err)
@@ -122,6 +123,7 @@ func (c *NativeClient) transcribeRX(frames [][]byte, name string, freq Frequency
 	fmt.Printf("  YOU SAID (SRS): %s\n", text)
 	call := ReceivedCall{
 		Pilot:      name,
+		GUID:       guid,
 		Frequency:  freq,
 		Transcript: text,
 		ReceivedAt: time.Now(),

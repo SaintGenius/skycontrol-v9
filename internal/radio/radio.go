@@ -41,6 +41,7 @@ type Transmission struct {
 // ReceivedCall is a voice transmission received from a player.
 type ReceivedCall struct {
 	Pilot      string
+	GUID       string // SRS client GUID — sticky lock to a Tacview jet
 	Frequency  Frequency
 	AudioPCM   []float32 // raw audio if available
 	Transcript string    // filled later by STT
