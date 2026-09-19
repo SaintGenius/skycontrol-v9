@@ -1,0 +1,7 @@
+Copy these files INTO your existing skycontrol folder (overwrite).
+Do not replace piper, data, or config.yaml.
+
+Then BUILD.bat → LAUNCH.bat
+
+You should see:  Sky Control v10
+On radio check:  locked SRS -> Genius 1-1

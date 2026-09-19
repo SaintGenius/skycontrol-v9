@@ -276,10 +276,6 @@
         </div>
       </div>
       <div class="card">
-        <h2>ATIS</h2>
-        <div class="tape" id="atis">Off — sit in a jet.</div>
-      </div>
-      <div class="card">
         <h2>Say / type</h2>
         <form id="say-form" class="row" style="margin-bottom:12px">
           <input id="say" autocomplete="off" placeholder="request taxi" />
@@ -372,7 +368,6 @@
           ? `${s.airfield}  ·  ${Number(s.dist_nm || 0).toFixed(1)} nm  ·  ${s.on_ground ? "ground" : "air"}  ·  ${s.aircraft} tracked`
           : "Sit in the jet. Positions fill in from live telemetry.";
         $("tape").textContent = s.last_atc || "No calls yet.";
-        $("atis").textContent = s.atis || "Off — sit in a jet.";
         const box = $("lights");
         box.innerHTML = "";
         (s.connections || []).forEach((c) => {
@@ -459,7 +454,7 @@
           control = `<label for="f-${f.key}">${f.label}</label><textarea id="f-${f.key}">${text}</textarea>`;
         } else {
           const t = f.kind === "password" ? "password" : (f.kind === "number" ? "number" : "text");
-          const safe = String(val ?? "").replace(/"/g, """);
+          const safe = String(val ?? "").replace(/"/g, "&quot;");
           control = `<label for="f-${f.key}">${f.label}</label><input id="f-${f.key}" type="${t}" value="${safe}" />`;
         }
         wrap.innerHTML = control + (f.help ? `<div class="help">${f.help}</div>` : "");

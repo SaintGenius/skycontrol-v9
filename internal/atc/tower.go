@@ -1290,7 +1290,6 @@ func (t *Tower) identifyCaller(call radio.ReceivedCall) *AircraftState {
 			}
 		}
 	}
-	// Xbox / typed calls have no SRS GUID — local jet only.
 	if guid == "" {
 		return t.primaryLocked()
 	}
